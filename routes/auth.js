@@ -1,88 +1,60 @@
 const express = require('express');
-const bcyrpt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const { check , validationResult } = require('express-validator');
-const db = require('../config/db');
-
+const mysql = require('mysql2');
+const bcrypt = require('bcryptjs');
 const router = express.Router();
 
-
-
-// Register Route 
-
-router.post('/register' , [
-    check('username', 'Username is required').not().isEmpty(),
-    check('password', 'Password is required').not().isEmpty(),
-    check('Role', 'Role is required').isIn(['student', 'admin']),
-], async (req, res) => {
-    const errors = validationResult(req);
-    if(!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { username , password , role } = req.body;
-
-
-    try {
-        let user = await db.query('SELECT * FROM users WHERE username = ?' , [username]);
-        if(user.length > 0 ) {
-            return res.status(400).json({msg: 'User already exists'});
-        }
-
-        const salt = await bcyrpt.genSalt(10);
-        const hashedPassword = await bcyrpt.hash(password, salt);
-
-        await db.query('INSERT INTO users (username , password , role ) VALUES (?,?,?)', [username , hashedPassword, role]);
-
-        res.status(201).json({ msg: 'User registered succesfully'});
-
-    }catch(err) {
-        console.error(err.message);
-        res.status(500).send('Server erorr');
-    }
+const db = mysql.createConnection({
+    host: 'localhost',
+    user: 'admin', 
+    password: 'admin123', 
+    database: 'amrita_seva'
 });
 
-
- // Login Route 
-
- router.post('/login', [
-    check('username', 'Username is required').not().isEmpty(),
-    check('password', 'Password is required').not().isEmpty(),
-  ], async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+db.connect(err => {
+    if (err) {
+        console.error('Error connecting to the database:', err);
+        return;
     }
-  
+    console.log('Connected to the MySQL database.');
+});
+
+router.post('/register', (req, res) => {
     const { username, password } = req.body;
-  
-    try {
-      let user = await db.query('SELECT * FROM users WHERE username = ?', [username]);
-      if (user.length === 0) {
-        return res.status(400).json({ msg: 'Invalid Credentials' });
-      }
-  
-      const isMatch = await bcrypt.compare(password, user[0].password);
-      if (!isMatch) {
-        return res.status(400).json({ msg: 'Invalid Credentials' });
-      }
-  
-      const payload = {
-        user: {
-          id: user[0].id,
-          role: user[0].role
+    const hashedPassword = bcrypt.hashSync(password, 8);
+
+    const query = 'INSERT INTO users (username, password) VALUES (?, ?)';
+    db.execute(query, [username, hashedPassword], (err, results) => {
+        if (err) {
+            console.error('Error registering user:', err);
+            return res.status(500).json({ message: 'Error registering user' });
         }
-      };
-  
-      jwt.sign(payload, 'your-jwt-secret', { expiresIn: 3600 }, (err, token) => {
-        if (err) throw err;
-        res.json({ token });
-      });
-  
-    } catch (err) {
-      console.error(err.message);
-      res.status(500).send('Server error');
-    }
-  });
-  
-  module.exports = router;
+        res.status(201).json({ message: 'User registered successfully' });
+    });
+});
+
+router.post('/login', (req, res) => {
+    const { username, password } = req.body;
+
+    const query = 'SELECT * FROM users WHERE username = ?';
+    db.execute(query, [username], (err, results) => {
+        if (err) {
+            console.error('Error fetching user:', err);
+            return res.status(500).json({ message: 'Error fetching user' });
+        }
+
+        if (results.length === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        const user = results[0];
+        const passwordIsValid = bcrypt.compareSync(password, user.password);
+
+        if (!passwordIsValid) {
+            return res.status(401).json({ message: 'Invalid password' });
+        }
+
+        res.status(200).json({ message: 'Login successful' });
+    });
+});
+
+module.exports = router;
